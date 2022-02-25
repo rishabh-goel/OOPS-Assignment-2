@@ -2,32 +2,41 @@ package com.rishabh.hw2
 
 import com.rishabh.hw2.Computation.SetExp.Assign
 
+import scala.collection.mutable.*
+
 object Computation:
 
   import SetExp.*
-  import scala.collection.mutable.Map
-  import scala.collection.mutable.Set
 
   // Aliasing 'Any' to avoid hardcoding of Variable types
   type BasicType = Any
 
   // Map to store the macros
-  val macroMap: scala.collection.mutable.Map[BasicType, SetExp] = scala.collection.mutable.Map()
+  val macroMap: Map[BasicType, SetExp] = Map()
 
   // Map to store variables and scopes
-  val scopeMap: scala.collection.mutable.Map[BasicType, BasicType] = scala.collection.mutable.Map()
+  val scopeMap: Map[BasicType, BasicType] = Map()
 
   // Map to store class definitions
-  val classMap: scala.collection.mutable.Map[BasicType, BasicType] = scala.collection.mutable.Map()
+  val classMap: Map[BasicType, BasicType] = Map()
 
   // Map to store objects of a class
-  val objectMap: scala.collection.mutable.Map[BasicType, BasicType] = scala.collection.mutable.Map()
+  val objectMap: Map[BasicType, BasicType] = Map()
 
   // Map to store attributes an object can access
-  val attrMap: scala.collection.mutable.Map[BasicType, BasicType] = scala.collection.mutable.Map()
+  val attrMap: Map[BasicType, BasicType] = Map()
 
-  // Map to store method comoputation
-  val methodMap: scala.collection.mutable.Map[BasicType, BasicType] = scala.collection.mutable.Map()
+  // Map to monitor access of fields and methods
+  val accessMap: Map[BasicType, BasicType] = Map("public" -> Map(), "private" -> Map(), "protected" -> Map())
+
+//  // Map to monitor public access modifier
+//  val publicMap: Map[BasicType, BasicType] = Map()
+//
+//  // Map to monitor private access modifier
+//  val privateMap: Map[BasicType, BasicType] = Map()
+//
+//  // Map to monitor protected access modifier
+//  val protectedMap: Map[BasicType, BasicType] = Map()
 
   enum SetExp:
     case Value(input: BasicType) // Get the value of the element passed
@@ -44,28 +53,34 @@ object Computation:
     case GetMacro(macroName: String) // Fetch a macro from macroMap Map
     case Scope(name: String, op: SetExp) // Set Scope of variables
     case ClassDef(className: String, expr: SetExp*)
-    case Field(name: String)
+    case Field(name: String, expr: SetExp*)
     case Constructor(expr: SetExp)
     case NewObject(className: String, expr: SetExp)
     case InvokeObject(className: SetExp, objectName: SetExp, attrName: SetExp)
     case GetObject(className: String, objectName: SetExp, expr: SetExp)
-    case CreateMethod(methodName: String, methodType: String)
-    case InvokeMethod(methodName: String, param1: SetExp, param2: SetExp)
+    case CreateMethod(methodName: String, methodType: SetExp)
+    case InvokeMethod(methodName: String, param: SetExp*)
+    case Public(param: SetExp)
+    case Private(param: SetExp)
+    case Protected(param: SetExp)
 
     def Extends(superClass: SetExp) = {
+      val parent = superClass.eval().asInstanceOf[Map[BasicType, BasicType]]
+      val child = this.eval().asInstanceOf[Map[BasicType, BasicType]]
 
-      val parent: scala.collection.mutable.Map[BasicType, BasicType] = superClass.eval().asInstanceOf[scala.collection.mutable.Map[BasicType, BasicType]]
-      val child: scala.collection.mutable.Map[BasicType, BasicType] = this.eval().asInstanceOf[scala.collection.mutable.Map[BasicType, BasicType]]
-      val childClass = classMap.find(_._2 == child).map(_._1) match {
+      val constructorArray = parent("constructor").asInstanceOf[Map[BasicType, BasicType]].++(child("constructor").asInstanceOf[Map[BasicType, BasicType]])
+      val fieldMap = parent("field").asInstanceOf[Map[BasicType, BasicType]].++(child("field").asInstanceOf[Map[BasicType, BasicType]])
+      val methodMap = parent("method").asInstanceOf[Map[BasicType, BasicType]].++(child("method").asInstanceOf[Map[BasicType, BasicType]])
+
+      val childName = classMap.find(_._2 == child).map(_._1) match {
         case Some(m) => m.asInstanceOf[String]
       }
 
-      val result: scala.collection.mutable.Map[BasicType, BasicType] = child.++(parent)
-
-      classMap += (childClass -> result)
+      val map: Map[BasicType, BasicType] = Map("field" -> fieldMap, "constructor" -> constructorArray, "method" -> methodMap)
+      classMap += (childName -> map)
     }
 
-    def eval(scope: scala.collection.mutable.Map[BasicType, BasicType] = scopeMap): BasicType =
+    def eval(scope: Map[BasicType, BasicType] = scopeMap, access: Map[BasicType, BasicType]*): BasicType =
       this match {
 
         case Value(i) => i
@@ -74,50 +89,49 @@ object Computation:
           if(scope.contains(name))
             scope(name)
           else
-            throw new Exception("Variable " + name + " not found in current scope")
+            //throw new Exception("Variable " + name + " not found in current scope")
+            Value(name).eval()
 
 
         case Check(set, item) =>
-          val s: scala.collection.mutable.Set[BasicType] = set.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
+          val s: Set[BasicType] = set.eval(scope).asInstanceOf[Set[BasicType]]
           s.contains(item.eval(scope))
 
         case Assign(name, item) =>
           scope += (name -> item.eval(scope))
-          scope
-          (name -> item.eval(scope))
 
         case Insert(set, item) =>
-          scope.update(set.eval(scope), set.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]] += item.eval(scope))
+          scope.update(set.eval(scope), set.eval(scope).asInstanceOf[Set[BasicType]] += item.eval(scope))
           scope(set.eval(scope))
 
         case Delete(set, item) =>
-          scope.update(set.eval(scope), set.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]] -= item.eval(scope))
+          scope.update(set.eval(scope), set.eval(scope).asInstanceOf[Set[BasicType]] -= item.eval(scope))
           scope(set.eval(scope))
 
         case Union(set1, set2) =>
-          val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val result: scala.collection.mutable.Set[BasicType] = s1.union(s2)
+          val s1: Set[BasicType] = set1.eval(scope).asInstanceOf[Set[BasicType]]
+          val s2: Set[BasicType] = set2.eval(scope).asInstanceOf[Set[BasicType]]
+          val result: Set[BasicType] = s1.union(s2)
           result
 
         case Intersect(set1, set2) =>
-          val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val result: scala.collection.mutable.Set[BasicType] = s1.intersect(s2)
+          val s1: Set[BasicType] = set1.eval(scope).asInstanceOf[Set[BasicType]]
+          val s2: Set[BasicType] = set2.eval(scope).asInstanceOf[Set[BasicType]]
+          val result: Set[BasicType] = s1.intersect(s2)
           result
 
         case Diff(set1, set2) =>
-          val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val list_concat: scala.collection.mutable.Set[BasicType] = s1.union(s2)
-          val list_intersect: scala.collection.mutable.Set[BasicType] = s1.intersect(s2)
+          val s1: Set[BasicType] = set1.eval(scope).asInstanceOf[Set[BasicType]]
+          val s2: Set[BasicType] = set2.eval(scope).asInstanceOf[Set[BasicType]]
+          val list_concat: Set[BasicType] = s1.union(s2)
+          val list_intersect: Set[BasicType] = s1.intersect(s2)
           val result = list_concat.diff(list_intersect)
           result
 
         case Cross(set1, set2) =>
-          val s1: scala.collection.mutable.Set[BasicType] = set1.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val s2: scala.collection.mutable.Set[BasicType] = set2.eval(scope).asInstanceOf[scala.collection.mutable.Set[BasicType]]
-          val result: scala.collection.mutable.Set[BasicType] = s1.flatMap(a => s2.map(b => (a, b)))
+          val s1: Set[BasicType] = set1.eval(scope).asInstanceOf[Set[BasicType]]
+          val s2: Set[BasicType] = set2.eval(scope).asInstanceOf[Set[BasicType]]
+          val result: Set[BasicType] = s1.flatMap(a => s2.map(b => (a, b)))
           result
 
         case SetMacro(macroName, op) =>
@@ -135,11 +149,10 @@ object Computation:
 
           val sc = scope.get(key)
           val currentScope = sc match {
-            case Some(s) => s.asInstanceOf[scala.collection.mutable.Map[BasicType, BasicType]]
+            case Some(s) => s.asInstanceOf[Map[BasicType, BasicType]]
 
             case None => {
-              println("Create new scope - " + key)
-              val temp: scala.collection.mutable.Map[BasicType, BasicType] = scala.collection.mutable.Map()
+              val temp: Map[BasicType, BasicType] = Map()
               scope += (key -> temp)
               temp
             }
@@ -147,34 +160,61 @@ object Computation:
           op.eval(currentScope)
 
         case ClassDef(className, expr*) =>
+          val fieldMap: Map[String, Any] = Map()
+          val constructorArray: Map[BasicType, BasicType] = Map()
+          val methodMap: Map[String, SetExp] = Map()
+
           if(classMap.contains(className))
             classMap(className)
           else {
-            if(expr.length == 0)
-              classMap += (className -> scala.collection.mutable.Map())
-            else {
-              classMap += (className -> scala.collection.mutable.Map())
-              expr.foreach(i => {
-                classMap.update(className, classMap(className).asInstanceOf[scala.collection.mutable.Map[BasicType, BasicType]] += i.eval().asInstanceOf[(BasicType, BasicType)])
-              })
-              classMap(className)
-            }
+            val map: Map[BasicType, BasicType] = Map("field" -> fieldMap, "constructor" -> constructorArray, "method" -> methodMap)
+            val publicClassMap: Map[BasicType, BasicType] = Map(className -> Map())
+            val privateClassMap: Map[BasicType, BasicType] = Map(className -> Map())
+            val protectedClassMap: Map[BasicType, BasicType] = Map(className -> Map())
+
+            expr.foreach(i => {
+              i.eval(map, publicClassMap, privateClassMap, protectedClassMap)
+            })
+
+            classMap += (className -> map)
+            accessMap.update("public", accessMap("public").asInstanceOf[Map[BasicType, BasicType]] += (publicClassMap.head._1 -> publicClassMap.head._2))
+            accessMap.update("private", accessMap("private").asInstanceOf[Map[BasicType, BasicType]] += (privateClassMap.head._1 -> privateClassMap.head._2))
+            accessMap.update("protected", accessMap("protected").asInstanceOf[Map[BasicType, BasicType]] += (protectedClassMap.head._1 -> protectedClassMap.head._2))
+
+            classMap(className)
           }
 
-        case Field(name) =>
-          (name -> null)
+        case Field(name, expr*) =>
+          val fieldMap = scope("field").asInstanceOf[Map[BasicType, BasicType]]
+
+          if(expr.length == 0)
+            fieldMap += (name -> null)
+            Map(name -> null)
+          else
+            fieldMap += (name -> expr(0).eval())
+            Map(name -> expr(0).eval())
 
         case Constructor(expr) =>
-          expr.eval(scope)
+          val constructorMap = scope("constructor").asInstanceOf[Map[BasicType, BasicType]]
+          expr.eval(constructorMap)
+
+
+        case CreateMethod(methodName, expr) =>
+          val methodMap = scope("method").asInstanceOf[Map[BasicType, SetExp]]
+          methodMap += (methodName -> expr)
+
+
+        case InvokeMethod(methodName, param*) =>
+          //TODO: How to extract formal params and replace with actual params
 
         case NewObject(className, expr) =>
           if(objectMap.contains(className)){
-            val list: scala.collection.mutable.ListBuffer[Any] = objectMap(className).asInstanceOf[scala.collection.mutable.ListBuffer[Any]]
+            val list: ListBuffer[Any] = objectMap(className).asInstanceOf[ListBuffer[Any]]
             list += expr.eval()
             objectMap += (className -> list)
           }
           else {
-            val list: scala.collection.mutable.ListBuffer[Any] = scala.collection.mutable.ListBuffer()
+            val list: ListBuffer[Any] = ListBuffer()
             list += expr.eval()
             objectMap += (className -> list)
           }
@@ -185,50 +225,54 @@ object Computation:
           if(!objectMap.contains(className.eval()))
             throw new Exception("Class "+ className.eval() + " does not have any object")
           else {
-            val list: scala.collection.mutable.ListBuffer[BasicType] = objectMap(className.eval()).asInstanceOf[scala.collection.mutable.ListBuffer[BasicType]]
+            val list: ListBuffer[BasicType] = objectMap(className.eval()).asInstanceOf[ListBuffer[BasicType]]
 
             if(!list.contains(objectName.eval()))
               throw new Exception("Object "+ objectName.eval() + " does not exist")
             else {
-              val map: scala.collection.mutable.Map[BasicType, BasicType] = attrMap(objectName.eval()).asInstanceOf[scala.collection.mutable.Map[BasicType, BasicType]]
-              map(attrName.eval())
+              val map: Map[BasicType, BasicType] = attrMap(objectName.eval()).asInstanceOf[Map[BasicType, BasicType]]
+
+              // Executing the constructor
+              val constructorMap = map("constructor").asInstanceOf[Map[BasicType, BasicType]]
+              val fieldMap = map("field").asInstanceOf[Map[BasicType, BasicType]].++(constructorMap)
+              val newfieldMap = fieldMap
+              map.put("constuctor", constructorMap.clear())
+              map.put("field", newfieldMap)
+
+              // Executing the attribute requested by constructor
+              attrMap(attrName)
             }
           }
 
-        case CreateMethod(methodName, methodType) =>
-          methodMap += (methodName -> methodType)
+        case Public(expr) =>
+          val publicMap = access(0).asInstanceOf[Map[BasicType, BasicType]]
+          publicMap += (publicMap.head._1 -> expr.eval(scope))
 
-        case InvokeMethod(methodName, param1, param2) =>
-          val methodType: String = methodMap(methodName).asInstanceOf[String]
 
-          val result = methodType match {
-            case "UNION" => Union(param1, param2).eval()
-            case "INTERSECT" => Intersect(param1, param2).eval()
-            case "DIFFERENCE" => Diff(param1, param2).eval()
-            case "CROSS_PRODUCT" => Cross(param1, param2).eval()
-            case "CHECK" => Check(param1, param2).eval()
-          }
+        case Private(expr) =>
+          val privateMap = access(1).asInstanceOf[Map[BasicType, BasicType]]
+          privateMap += (privateMap.head._1 -> expr.eval(scope))
+
+        case Protected(expr) =>
+          val protectedMap = access(2).asInstanceOf[Map[BasicType, BasicType]]
+          protectedMap += (protectedMap.head._1 -> expr.eval(scope))
 
       }
 
   @main def runArithExp: Unit =
     import SetExp.*
 
+    ClassDef("MyClass", Field("f"), Field("ff", Value(2)), Constructor(Assign("fff", Value(5))), CreateMethod("m1", Value(1)), CreateMethod("m2", Union(Variable("X"), Variable("Y")))).eval()
+    ClassDef("DerivedClass", Public(Field("e")), Private(Field("ee", Value(2))), Protected(Field("eeeee", Value(5))), Constructor(Assign("eee", Value(10)))).eval()
+    ClassDef("DerivedClass") Extends ClassDef("MyClass")
+    NewObject("MyClass", Variable("z")).eval()
+    NewObject("DerivedClass", Variable("y")).eval()
+    println(classMap("MyClass"))
+    println(classMap("DerivedClass"))
+    println(objectMap)
+    println(attrMap)
+    println(accessMap)
 
-//    println(Assign("B", Union(Value(Set(1,2)), Value(Set(3,4)))).eval())
-//    println(Variable("B").eval())
-    ClassDef("MyClass", Assign("A", Value(Set(1,2))), Assign("B", Value(Set(3,4))), Assign("C", Union(Variable("A"), Variable("B"))), Field("f"), Constructor(Assign("f", Value(2)))).eval()
-//    println(NewObject("MyClass", Value("z")).eval())
-//    println(NewObject("MyClass", Value("y")).eval())
-//
-//    println(InvokeObject(Value("MyClass"), Value("z"), Value("f")).eval())
-
-    //println(ClassDef("derivedClassName", Field("ff")) Extends ClassDef("MyClass"))
-
-    ClassDef("DerivedClass", Field("ff")) Extends ClassDef("MyClass")
-    println(ClassDef("MyClass").eval())
-    println(ClassDef("DerivedClass").eval())
-    println(classMap)
 
 
 
