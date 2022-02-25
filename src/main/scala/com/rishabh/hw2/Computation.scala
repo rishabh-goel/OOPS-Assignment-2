@@ -2,6 +2,7 @@ package com.rishabh.hw2
 
 import com.rishabh.hw2.Computation.SetExp.Assign
 
+import scala.collection.{immutable, mutable}
 import scala.collection.mutable.*
 
 object Computation:
@@ -26,17 +27,11 @@ object Computation:
   // Map to store attributes an object can access
   val attrMap: Map[BasicType, BasicType] = Map()
 
+  // Map to store inheritance
+  val inheritanceMap: Map[BasicType, BasicType] = Map()
+
   // Map to monitor access of fields and methods
   val accessMap: Map[BasicType, BasicType] = Map("public" -> Map(), "private" -> Map(), "protected" -> Map())
-
-//  // Map to monitor public access modifier
-//  val publicMap: Map[BasicType, BasicType] = Map()
-//
-//  // Map to monitor private access modifier
-//  val privateMap: Map[BasicType, BasicType] = Map()
-//
-//  // Map to monitor protected access modifier
-//  val protectedMap: Map[BasicType, BasicType] = Map()
 
   enum SetExp:
     case Value(input: BasicType) // Get the value of the element passed
@@ -56,28 +51,60 @@ object Computation:
     case Field(name: String, expr: SetExp*)
     case Constructor(expr: SetExp)
     case NewObject(className: String, expr: SetExp)
-    case InvokeObject(className: SetExp, objectName: SetExp, attrName: SetExp)
+    case InvokeObject(className: SetExp, objectName: SetExp, attrName: SetExp, actualParams: SetExp*)
     case GetObject(className: String, objectName: SetExp, expr: SetExp)
-    case CreateMethod(methodName: String, methodType: SetExp)
-    case InvokeMethod(methodName: String, param: SetExp*)
+    case CreateMethod(methodName: String, params: Params, methodType: SetExp*)
+    case InvokeMethod(methodName: ListBuffer[SetExp], formalparam: SetExp, actualparam: Any)
     case Public(param: SetExp)
     case Private(param: SetExp)
     case Protected(param: SetExp)
+    case Params(parameters: String*)
 
     def Extends(superClass: SetExp) = {
       val parent = superClass.eval().asInstanceOf[Map[BasicType, BasicType]]
       val child = this.eval().asInstanceOf[Map[BasicType, BasicType]]
 
-      val constructorArray = parent("constructor").asInstanceOf[Map[BasicType, BasicType]].++(child("constructor").asInstanceOf[Map[BasicType, BasicType]])
-      val fieldMap = parent("field").asInstanceOf[Map[BasicType, BasicType]].++(child("field").asInstanceOf[Map[BasicType, BasicType]])
-      val methodMap = parent("method").asInstanceOf[Map[BasicType, BasicType]].++(child("method").asInstanceOf[Map[BasicType, BasicType]])
-
       val childName = classMap.find(_._2 == child).map(_._1) match {
         case Some(m) => m.asInstanceOf[String]
       }
 
-      val map: Map[BasicType, BasicType] = Map("field" -> fieldMap, "constructor" -> constructorArray, "method" -> methodMap)
-      classMap += (childName -> map)
+      val parentName = classMap.find(_._2 == parent).map(_._1) match {
+        case Some(m) => m.asInstanceOf[String]
+      }
+
+      if(inheritanceMap.contains(childName))
+        throw new Exception("Cannot support multiple inheritance")
+      else {
+        val privateMembers = accessMap("private").asInstanceOf[Map[BasicType, BasicType]](parentName)
+
+//        println("private members - " + privateMembers.asInstanceOf[Map[BasicType, BasicType]])
+        val constructorMap = parent("constructor").asInstanceOf[Map[BasicType, BasicType]].++(child("constructor").asInstanceOf[Map[BasicType, BasicType]])
+        val fieldMap = parent("field").asInstanceOf[Map[BasicType, BasicType]].++(child("field").asInstanceOf[Map[BasicType, BasicType]])
+        privateMembers.asInstanceOf[Map[BasicType, BasicType]].keySet.foreach(i => {
+          fieldMap -= i
+        })
+
+        val methodMap = parent("method").asInstanceOf[Map[BasicType, BasicType]].++(child("method").asInstanceOf[Map[BasicType, BasicType]])
+        privateMembers.asInstanceOf[Map[BasicType, BasicType]].keySet.foreach(i => {
+          methodMap -= i
+        })
+
+        val publicParentMap = accessMap("public").asInstanceOf[Map[BasicType, BasicType]](parentName).asInstanceOf[Map[BasicType, BasicType]]
+        val publicChildMap = accessMap("public").asInstanceOf[Map[BasicType, BasicType]](childName).asInstanceOf[Map[BasicType, BasicType]]
+        val newpublicChildMap = publicChildMap.++(publicParentMap)
+
+        val protectedParentMap = accessMap("protected").asInstanceOf[Map[BasicType, BasicType]](parentName).asInstanceOf[Map[BasicType, BasicType]]
+        val protectedChildMap = accessMap("protected").asInstanceOf[Map[BasicType, BasicType]](childName).asInstanceOf[Map[BasicType, BasicType]]
+        val newprotectedChildMap = protectedChildMap.++(protectedParentMap)
+
+        accessMap.update("public", accessMap("public").asInstanceOf[Map[BasicType, BasicType]] += (childName -> newpublicChildMap))
+        accessMap.update("protected", accessMap("protected").asInstanceOf[Map[BasicType, BasicType]] += (childName -> newprotectedChildMap))
+
+        inheritanceMap += (childName -> parentName)
+
+        val map: Map[BasicType, BasicType] = Map("field" -> fieldMap, "constructor" -> constructorMap, "method" -> methodMap)
+        classMap += (childName -> map)
+      }
     }
 
     def eval(scope: Map[BasicType, BasicType] = scopeMap, access: Map[BasicType, BasicType]*): BasicType =
@@ -162,7 +189,7 @@ object Computation:
         case ClassDef(className, expr*) =>
           val fieldMap: Map[String, Any] = Map()
           val constructorArray: Map[BasicType, BasicType] = Map()
-          val methodMap: Map[String, SetExp] = Map()
+          val methodMap: Map[String, ListBuffer[SetExp]] = Map()
 
           if(classMap.contains(className))
             classMap(className)
@@ -198,14 +225,46 @@ object Computation:
           val constructorMap = scope("constructor").asInstanceOf[Map[BasicType, BasicType]]
           expr.eval(constructorMap)
 
-
-        case CreateMethod(methodName, expr) =>
-          val methodMap = scope("method").asInstanceOf[Map[BasicType, SetExp]]
-          methodMap += (methodName -> expr)
+        case Params(params*) =>
+          params
 
 
-        case InvokeMethod(methodName, param*) =>
-          //TODO: How to extract formal params and replace with actual params
+        case CreateMethod(methodName, params, expr*) =>
+          val methodMap = scope("method").asInstanceOf[Map[BasicType, ListBuffer[SetExp]]]
+          val list = new ListBuffer[SetExp]
+          list.addOne(params)
+
+          expr.foreach(i => list.addOne(i))
+          methodMap += (methodName -> list)
+          Map(methodName -> list)
+
+
+        case InvokeMethod(method, formalparam, actualparam) =>
+          println("method is - " + method(0))
+          println("formal parameters are - " + formalparam.asInstanceOf[SetExp].eval())
+          println("actual parameters are - " + actualparam)
+
+          val fp: immutable.ArraySeq[String] = formalparam.asInstanceOf[SetExp].eval().asInstanceOf[immutable.ArraySeq[String]]
+          val ap: immutable.ArraySeq[SetExp] = actualparam.asInstanceOf[immutable.ArraySeq[SetExp]]
+
+          if(fp.length.equals(ap.length)) {
+            val list = fp.zip(ap)
+            list.foreach(i => {
+              scope += (i._1 -> i._2.eval())
+            })
+
+            method.zipWithIndex.foreach(i => {
+              if(i._2 != method.length-1) {
+                i._1.asInstanceOf[SetExp].eval(scope)
+              }
+            })
+
+            method(method.length-1).asInstanceOf[SetExp].eval(scope)
+          }
+          else {
+            throw new Exception("Parameters missing")
+          }
+
 
         case NewObject(className, expr) =>
           if(objectMap.contains(className)){
@@ -221,7 +280,8 @@ object Computation:
 
           attrMap += (expr.eval() -> classMap(className))
 
-        case InvokeObject(className, objectName, attrName) =>
+
+        case InvokeObject(className, objectName, attrName, actualParams*) =>
           if(!objectMap.contains(className.eval()))
             throw new Exception("Class "+ className.eval() + " does not have any object")
           else {
@@ -236,42 +296,60 @@ object Computation:
               val constructorMap = map("constructor").asInstanceOf[Map[BasicType, BasicType]]
               val fieldMap = map("field").asInstanceOf[Map[BasicType, BasicType]].++(constructorMap)
               val newfieldMap = fieldMap
-              map.put("constuctor", constructorMap.clear())
+              map.put("constructor", Map())
               map.put("field", newfieldMap)
 
               // Executing the attribute requested by constructor
-              attrMap(attrName)
+              if(actualParams.length == 0){
+                val fieldMap = map("field").asInstanceOf[Map[BasicType, BasicType]]
+                fieldMap(attrName.eval())
+              }
+              else{
+                val methodMap = map("method").asInstanceOf[Map[BasicType, BasicType]]
+                val method = methodMap(attrName.eval()).asInstanceOf[ListBuffer[SetExp]]
+                val formalParams = method(0)
+                val tempMap: Map[Any, Any] = Map()
+                InvokeMethod(method.drop(1), formalParams, actualParams).eval(tempMap)
+              }
             }
           }
 
         case Public(expr) =>
           val publicMap = access(0).asInstanceOf[Map[BasicType, BasicType]]
-          publicMap += (publicMap.head._1 -> expr.eval(scope))
+          val result = expr.eval(scope).asInstanceOf[Map[BasicType, BasicType]]
+          publicMap.update(publicMap.head._1, publicMap(publicMap.head._1).asInstanceOf[Map[BasicType, BasicType]] += (result.head._1 -> result.head._2))
 
 
         case Private(expr) =>
           val privateMap = access(1).asInstanceOf[Map[BasicType, BasicType]]
-          privateMap += (privateMap.head._1 -> expr.eval(scope))
+          val result = expr.eval(scope).asInstanceOf[Map[BasicType, BasicType]]
+          privateMap.update(privateMap.head._1, privateMap(privateMap.head._1).asInstanceOf[Map[BasicType, BasicType]] += (result.head._1 -> result.head._2))
+
 
         case Protected(expr) =>
           val protectedMap = access(2).asInstanceOf[Map[BasicType, BasicType]]
-          protectedMap += (protectedMap.head._1 -> expr.eval(scope))
+          val result = expr.eval(scope).asInstanceOf[Map[BasicType, BasicType]]
+          protectedMap.update(protectedMap.head._1, protectedMap(protectedMap.head._1).asInstanceOf[Map[BasicType, BasicType]] += (result.head._1 -> result.head._2))
 
       }
 
   @main def runArithExp: Unit =
     import SetExp.*
 
-    ClassDef("MyClass", Field("f"), Field("ff", Value(2)), Constructor(Assign("fff", Value(5))), CreateMethod("m1", Value(1)), CreateMethod("m2", Union(Variable("X"), Variable("Y")))).eval()
-    ClassDef("DerivedClass", Public(Field("e")), Private(Field("ee", Value(2))), Protected(Field("eeeee", Value(5))), Constructor(Assign("eee", Value(10)))).eval()
+    ClassDef("MyClass", Public(Field("f")), Private(Field("ff", Value(2))), Constructor(Assign("fff", Value(5))), Private(CreateMethod("m1", Params("a", "b"), Assign("c", Union(Variable("a"), Variable("b"))), Variable("c"))), CreateMethod("m2", Params("X", "Y"), Union(Variable("X"), Variable("Y")))).eval()
+    ClassDef("DerivedClass", Public(Field("e")), Private(Field("ee", Value(2))), Protected(Field("eeee", Value(5))), Protected(Field("eeeee")), Constructor(Assign("eee", Value(10)))).eval()
     ClassDef("DerivedClass") Extends ClassDef("MyClass")
     NewObject("MyClass", Variable("z")).eval()
     NewObject("DerivedClass", Variable("y")).eval()
     println(classMap("MyClass"))
     println(classMap("DerivedClass"))
-    println(objectMap)
+//    println(objectMap)
     println(attrMap)
-    println(accessMap)
+    println("public - "+accessMap("public"))
+    println("private - "+accessMap("private"))
+    println("protected - "+accessMap("protected"))
+    println(InvokeObject(Value("MyClass"), Value("z"), Value("m1"), Value(Set(1,2)), Value(Set(3,4))).eval())
+
 
 
 
