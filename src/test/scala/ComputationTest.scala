@@ -91,7 +91,7 @@ class ComputationTest extends AnyFlatSpec with Matchers{
 
   // Test 5
   it should "check that an exception is thrown" in {
-    //inner class object should be created only after parent object has been created
-    assert(caught.getMessage === "Parent object doesn't exist")
+    //inner class object should be created only after outer class object has been created
+    assert(caught.getMessage === "Outer class object doesn't exist")
   }
 }
