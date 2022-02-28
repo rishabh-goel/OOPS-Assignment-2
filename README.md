@@ -136,3 +136,6 @@ Import the following dependencies into your code:
 7. Private members are not inherited.
 8. Child classes can inherit from only 1 class
 9. Only 1 inner class can be created
+10. Make sure both class are created before you make one class as inner of another
+11. Make sure both class are created before you inherit members of one class in another
+12. `Extends` is the only function that doesn't use `.eval()`
